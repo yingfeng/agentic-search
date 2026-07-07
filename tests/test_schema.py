@@ -8,7 +8,7 @@ from agentic_search.schema import parse_with_repair
 
 def test_schema_registry_build():
     reg = build_default_registry()
-    for name in ["RetrievalPlan", "QueryRewriteResult", "ContextAssessment", "GroundedAnswer"]:
+    for name in ["SearchPlan", "QueryRewriteResult", "DraftAnswer", "RetrievalPlan", "ContextAssessment", "GroundedAnswer"]:
         assert reg.get(name) is not None
 
 

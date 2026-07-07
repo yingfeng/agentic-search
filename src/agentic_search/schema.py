@@ -115,8 +115,67 @@ class SchemaRegistry:
 
 
 def build_default_registry() -> SchemaRegistry:
-    """Build the default schema registry with all 4 core schemas."""
+    """Build the default schema registry with all 6 core schemas."""
     reg = SchemaRegistry()
+
+    reg.register(SchemaSpec(
+        name="SearchPlan",
+        fields={
+            "analysis": {
+                "type": "string", "required": True,
+                "description": "Reasoning: decompose question into required facts",
+            },
+            "required_facts": {
+                "type": "list", "required": True,
+                "description": "List of required facts: each has a fact_id, description, and key terms",
+            },
+            "routes": {
+                "type": "list", "required": True,
+                "description": "Search routes: each maps a fact to a target corpus with a search query",
+            },
+        },
+        description="LLM-generated search plan with decomposition and cross-corpus routing",
+    ))
+
+    reg.register(SchemaSpec(
+        name="QueryRewriteResult",
+        fields={
+            "subqueries": {
+                "type": "list", "required": True,
+                "description": (
+                    "One or more rewritten queries per fact. Each has: "
+                    "fact_id (which fact this targets), "
+                    "query (the rewritten search string), "
+                    "target_corpus (which corpus to search), "
+                    "reasoning (why this query formulation)"
+                ),
+            },
+            "reasoning": {
+                "type": "string", "required": False,
+                "description": "Overall reasoning for query decomposition",
+            },
+        },
+        description="LLM-rewritten search queries with multi-query decomposition",
+    ))
+
+    reg.register(SchemaSpec(
+        name="DraftAnswer",
+        fields={
+            "claims": {
+                "type": "list", "required": True,
+                "description": (
+                    "List of factual claims extracted from the retrieved context. "
+                    "Each claim must be a complete sentence that can stand alone. "
+                    "Each claim includes the claim text and the snippet IDs it is based on."
+                ),
+            },
+            "draft_text": {
+                "type": "string", "required": True,
+                "description": "Full draft answer synthesizing all claims into a coherent response",
+            },
+        },
+        description="LLM-generated intermediate draft with claim-level citations",
+    ))
 
     reg.register(SchemaSpec(
         name="RetrievalPlan",
@@ -125,15 +184,6 @@ def build_default_registry() -> SchemaRegistry:
             "analysis": {"type": "string", "required": True, "description": "Reasoning behind the plan"},
         },
         description="Search plan with routes and analysis",
-    ))
-
-    reg.register(SchemaSpec(
-        name="QueryRewriteResult",
-        fields={
-            "queries": {"type": "list", "required": True, "description": "Rewritten search queries"},
-            "reasoning": {"type": "string", "required": False},
-        },
-        description="Rewritten search queries",
     ))
 
     reg.register(SchemaSpec(

@@ -39,4 +39,11 @@ from .contracts import (
 from .schema import SchemaRegistry, build_default_registry, SchemaSpec
 from .evaluation import EvaluationFixture, evaluate_run, compare_runs
 from .orchestrator import AgenticRAGOrchestrator
-from .llm_adapters import LLMPlanner, LLMQueryRewriter, LLMSufficiencyJudge, LLMSynthesizer
+from .llm_adapters import (
+    LLMRootAgent,
+    LLMPlanner,
+    LLMQueryRewriter,
+    LLMDrafter,
+    LLMSufficiencyJudge,
+    LLMSynthesizer,
+)
