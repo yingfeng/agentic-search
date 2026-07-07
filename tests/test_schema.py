@@ -17,6 +17,7 @@ def test_schema_validation_passes():
     data = {
         "status": "sufficient",
         "sufficiency_score": 0.9,
+        "draft_answer": "A complete answer based on the context.",
         "missing_facts": [],
         "feedback_queries": [],
         "reason": "Everything found.",
@@ -34,8 +35,9 @@ def test_schema_validation_fails():
 def test_schema_enum_validation():
     reg = build_default_registry()
     data = {
-        "status": "invalid_value",  # Not in enum
+        "status": "invalid_value",
         "sufficiency_score": 0.5,
+        "draft_answer": "test draft",
         "missing_facts": [],
         "feedback_queries": [],
         "reason": "test",
@@ -48,7 +50,8 @@ def test_schema_range_validation():
     reg = build_default_registry()
     data = {
         "status": "sufficient",
-        "sufficiency_score": 99.0,  # > 1.0
+        "sufficiency_score": 99.0,
+        "draft_answer": "test draft",
         "missing_facts": [],
         "feedback_queries": [],
         "reason": "test",

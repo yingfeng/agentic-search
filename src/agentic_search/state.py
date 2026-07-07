@@ -92,6 +92,7 @@ class ContextAssessment:
     missing_facts: list[str]              # fact_ids that were NOT found
     feedback_queries: list[FeedbackQuery]  # Directed queries for the next iteration
     reason: str                           # Human-readable judgment explanation
+    draft_answer: str = ""                # Intermediate draft (for traceability)
 
 
 @dataclass

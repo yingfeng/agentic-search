@@ -148,6 +148,10 @@ def build_default_registry() -> SchemaRegistry:
                 "type": "number", "required": True, "min": 0.0, "max": 1.0,
                 "description": "Fraction of required facts covered",
             },
+            "draft_answer": {
+                "type": "string", "required": True,
+                "description": "A rough draft answer based on current context, used to identify gaps",
+            },
             "missing_facts": {"type": "list", "required": True, "description": "Missing fact IDs"},
             "feedback_queries": {"type": "list", "required": True, "description": "Queries for next iteration"},
             "reason": {"type": "string", "required": True, "description": "Judgment explanation"},

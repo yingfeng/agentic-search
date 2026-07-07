@@ -130,7 +130,36 @@ class LLMQueryRewriter:
 
 
 class LLMSufficiencyJudge:
-    """LLM-based sufficiency judge — full 3-dimension check."""
+    """LLM-based sufficiency judge — full 3-dimension check.
+
+    Prompt design incorporates the "Draft First" technique from the
+    Python evaluate_context pattern: force the LLM to mentally draft
+    an answer before judging sufficiency. This prevents the LLM from
+    skipping the reasoning step and making a hasty verdict.
+    """
+
+    _SYSTEM_PROMPT = (
+        "You are a Sufficient Context Agent in an agentic RAG system.\n\n"
+        "Follow these steps to evaluate whether the retrieved context "
+        "contains enough information to fully answer the user's question:\n\n"
+        "Step 1 — Mentally draft a potential answer.\n"
+        "   Based ONLY on the retrieved snippets, draft the best answer you can.\n\n"
+        "Step 2 — Identify gaps.\n"
+        "   For each required fact, check: is the information present in the snippets?\n"
+        "   Are there any parts of the question left unanswered?\n"
+        "   Is any critical information missing or contradictory?\n\n"
+        "Step 3 — Classify the verdict.\n"
+        "   - sufficient: All required facts are covered. The draft is complete.\n"
+        "   - partial: Some facts are covered, but not all. A partial answer is possible.\n"
+        "   - insufficient: Key facts are missing. Need more search.\n"
+        "   - conflicting: Multiple contradictory values for the same fact.\n"
+        "   - unanswerable: No relevant information found.\n\n"
+        "Step 4 — Generate feedback.\n"
+        "   For each missing fact, provide a specific feedback query that "
+        "describes what to search for next.\n\n"
+        "Respond using the provided JSON schema. The 'draft_answer' field "
+        "must contain your Step 1 draft — this is critical for traceability."
+    )
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
@@ -154,20 +183,21 @@ class LLMSufficiencyJudge:
                 reason="No required facts defined.",
             )
 
-        context_text = "\n\n".join(f"[{sn.snippet_id}] {sn.text[:300]}" for sn in snippets[:15])
-        fact_list = "\n".join(f"- {f.fact_id}: {f.description}" for f in plan.required_facts)
+        context_text = "\n\n".join(
+            f"[{sn.snippet_id}] {sn.text[:300]}" for sn in snippets[:15]
+        )
+        fact_list = "\n".join(
+            f"- {f.fact_id}: {f.description}" for f in plan.required_facts
+        )
 
         user_prompt = (
             f"Question: {question}\n\n"
             f"Required facts:\n{fact_list}\n\n"
-            f"Retrieved context:\n{context_text}\n\n"
-            f"Determine if the context is sufficient to answer.\n"
-            f"Status must be one of: sufficient, partial, insufficient, conflicting, unanswerable.\n"
-            f"If insufficient, list missing facts and suggest feedback queries."
+            f"Retrieved context:\n{context_text}"
         )
 
         result = await self.llm.complete_json(
-            system_prompt="You assess whether retrieved context is sufficient.",
+            system_prompt=self._SYSTEM_PROMPT,
             user_prompt=user_prompt,
             output_schema=self.schema.get("ContextAssessment").to_json_schema(),
         )
@@ -194,6 +224,7 @@ class LLMSufficiencyJudge:
             missing_facts=missing if isinstance(missing, list) else [],
             feedback_queries=feedback_queries,
             reason=result.get("reason", ""),
+            draft_answer=result.get("draft_answer", ""),
         )
 
 
