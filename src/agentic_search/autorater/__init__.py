@@ -8,10 +8,12 @@ Per the paper:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from typing import Protocol
 
 
 class SufficiencyAutorater(Protocol):
+    """Protocol for sufficient context classification."""
     """Protocol for sufficient context classification."""
 
     async def is_sufficient(self, question: str, context: str) -> tuple[bool, str]:
