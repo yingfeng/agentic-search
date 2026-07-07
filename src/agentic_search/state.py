@@ -149,6 +149,7 @@ class AgenticSearchState:
     dead_corpora: set[str] = field(default_factory=set)              # Exhausted corpora
     tried_queries: set[str] = field(default_factory=set)             # De-duplication
     traces: list[IterationTrace] = field(default_factory=list)
+    search_stats: dict = field(default_factory=dict)                  # Mechanical search stats
 
     # Final output
     answer: GroundedAnswer | None = None

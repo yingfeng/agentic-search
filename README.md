@@ -15,42 +15,56 @@ This implementation is grounded in two research artifacts:
 ```text
                     ┌─ plan → route → rewrite ─┐
                     │                           ▼
-                    │                    search_fanout
-                    │                           │
-                    │                    (parallel multi-source)
+                    │              search_fanout
+                    │           (multi-source parallel
+                    │     neighbor stitching | mech stats
+                    │     hierarchical degradation)
                     │                           │
                     │                    ┌──────┘
                     │                    ▼
                (iterate)              drafter
-                    ▲                    │
+                    ▲           (LLM draft + claim citations)
+                    │                    │
                     │                    ▼
-                    │            sufficient_context
+                    │         sufficient_context
+                    │         (3-dim check | 5-way verdict
+                    │          Draft First prompting)
                     │               │          │
                     │          (verdict)    (feedback)
                     │               │          │
                     └─────── plan ───┤          │
                                      ▼          ▼
                               selective_gen
+                       (dual-signal logistic regression)
                               │           │
                           (answer)    (abstain)
 ```
 
-This repository focuses on the product gap between ordinary "retrieve once, answer once" RAG and a more dependable loop. Key innovation: **dual-signal selective generation** combining sufficiency verdict with self-rated confidence, achieving 2–10% accuracy improvements over confidence-only methods (per the ICLR 2025 paper).
+Key innovation: **dual-signal selective generation** combining sufficiency verdict with self-rated confidence, achieving 2–10% accuracy improvements over confidence-only methods (per the ICLR 2025 paper).
 
 ## Key Features
 
 - **8-node LangGraph pipeline** with conditional routing (plan → rewrite → search → draft → judge → selective gen → synthesize/abstain)
+- **Root Agent** — top-level coordinator that analyzes question type and delegates strategy
+- **LLM-based Planner** — cross-corpus routing: decomposes question into required facts, routes each to the best corpus
+- **LLM-based Query Rewriter** — multi-query decomposition: expands each route into multiple search formulations
 - **Sufficient Context Agent** with 3-dimension check:
   - ① Retrieved snippet coverage
-  - ② Intermediate draft claim verification
+  - ② Intermediate draft claim verification (Draft First prompting)
   - ③ Missing pieces analysis with structured feedback queries
 - **5-way verdict system**: SUFFICIENT, USEFUL_BUT_INCOMPLETE, INSUFFICIENT, CONFLICTING, UNANSWERABLE
 - **Selective Generation**: dual-signal logistic regression fusion (confidence + sufficiency), with configurable strict/balanced/lenient thresholds
+- **LLM-based Drafter** — generates intermediate draft with claim-level citations (each claim cites source snippet IDs)
+- **LLM-based Synthesizer** — final answer with grounded citations
+- **Neighbor stitching** — extends KNN hits to sequential neighborhoods, preserving structural boundaries
+- **Mechanical search statistics** — code-calculated coverage, novelty delta, corpus hit counts (no LLM dependency)
+- **Hierarchical degradation chain** — primary → cache/fallback → graceful empty (single point failure resilience)
+- **Independent prompt template library** — all 8 agent prompts in dedicated module, `{variable}` placeholders, cached loading
 - **Autorater implementations**: FLAMe (online, 88%), Gemini (offline, 93%), and Fallback heuristic — all without ground truth answers
 - **Autorater Calibration**: gold-labeled dataset of 93+ instances, precision/recall/F1 measurement, comparison across autorater implementations
 - **Selective Generation Trainer**: synthetic data generation, logistic regression training, accuracy-coverage curve production, dual-signal vs confidence-only comparison
-- **Protocol-driven plugin architecture**: all 8 components are Protocols — swap in LLM-based, deterministic, or custom implementations
-- **Structured output schema registry**: JSON schema validation + automatic repair for LLM outputs
+- **Protocol-driven plugin architecture**: all 8 components are Protocols — swap LLM-based, deterministic, or custom implementations
+- **Structured output schema registry**: 6 JSON schemas with validation + automatic repair for LLM outputs
 - **FRAMES-style evaluation**: 5-metric evaluation (fact coverage, fetch coverage, reasoning correctness, citation completeness, iteration count) with baseline comparison
 - **Iterative retrieval**: multiple search iterations with `prior_assessment.feedback_queries` for precision gap-filling
 - **Full traceability**: every iteration recorded, evidence path preserved in final answer
@@ -85,15 +99,17 @@ This repository focuses on the product gap between ordinary "retrieve once, answ
 │       ├── graph.py               # LangGraph graph construction
 │       ├── config.py              # Configuration management
 │       ├── contracts.py           # Protocol interfaces (8 components)
-│       ├── schema.py              # JSON schema registry + validation + repair
+│       ├── schema.py              # JSON schema registry (6 schemas) + validation + repair
 │       ├── evaluation.py          # FRAMES-style 5-metric evaluation
 │       ├── orchestrator.py        # Protocol-driven high-level API
 │       ├── selective_gen_trainer.py # Logistic regression trainer + accuracy-coverage curves
 │       ├── main.py                # CLI entry point
+│       ├── prompts/               # Independent prompt template library
+│       │   └── __init__.py        # 8 agent prompts, cached, zero-dependency
 │       ├── agents/                # LangGraph node implementations
 │       │   ├── planner.py         # Task decomposition
 │       │   ├── query_rewriter.py  # Query optimization
-│       │   ├── search_fanout.py   # Parallel multi-source search
+│       │   ├── search_fanout.py   # Parallel search + neighbor stitching + mech stats + degradation
 │       │   ├── drafter.py         # Intermediate draft generation
 │       │   ├── sufficient_context.py  # Core sufficiency judge
 │       │   ├── selective_gen.py   # Dual-signal decision
@@ -101,8 +117,8 @@ This repository focuses on the product gap between ordinary "retrieve once, answ
 │       │   └── abstain.py         # Structured abstention
 │       ├── autorater/             # Sufficient context classifiers
 │       │   ├── __init__.py        # FLAMe / Gemini / Fallback
-│       │   └── calibration.py     # Gold-labeled dataset + accuracy measurement
-│       ├── llm_adapters.py        # LLM implementations of all Protocols
+│       │   └── calibration.py     # Gold-labeled dataset (93+ instances) + accuracy measurement
+│       ├── llm_adapters.py        # LLM implementations of all Protocols (prompts from prompts/)
 │       ├── retrieval/             # Multi-source retrieval backends
 │       │   ├── base.py            # Retriever Protocol
 │       │   ├── grep_retriever.py  # Codebase grep
@@ -176,7 +192,7 @@ All 45 tests passing verifies:
 | **LangGraph Pipeline** | 12 | Routing, verdicts, iteration, evidence trail |
 | **Autorater Calibration** | 7 | Gold dataset coverage, accuracy/precision/recall/F1 |
 | **Selective Gen Trainer** | 10 | Synthetic data, weight training, accuracy-coverage curves |
-| **Schema Validation** | 8 | JSON schema registry, enum/range validation, JSON repair |
+| **Schema Validation** | 8 | 6 schemas, enum/range validation, JSON repair |
 | **Orchestrator** | 4 | Protocol-driven pipeline, verdict routing, FRAMES eval |
 | **FRAMES Evaluation** | 3 | 5-metric scoring, baseline comparison |
 
@@ -256,9 +272,10 @@ Sample output confirming the paper's findings:
   → Diminishing returns at high coverage matches Figure 4
 ```
 
-To deploy trained weights into production, replace the hardcoded values in `selective_gen.py` with the exported weights:
+To deploy trained weights into production:
 
 ```python
+from agentic_search.selective_gen_trainer import SelectiveGenWeights
 weights = SelectiveGenWeights.from_dict({
     "w_confidence": -1.3740,
     "w_sufficiency": 3.9165,
@@ -271,59 +288,76 @@ weights = SelectiveGenWeights.from_dict({
 
 The scaffold separates orchestration from provider-specific implementation through Protocol interfaces:
 
-1. **Planner** decomposes the original question into required facts and routes each fact to candidate corpora.
-2. **QueryRewriter** creates targeted subqueries for each routed fact.
-3. **Search Fanout** executes parallel multi-source retrieval (grep, RAG, web).
-4. **Drafter** creates an intermediate answer from retrieved snippets.
-5. **Sufficient Context Agent** performs the 3-dimension check:
+1. **Root Agent** analyzes the question type and delegates strategy.
+2. **Planner** decomposes the question into required facts and routes each fact to the best corpus (cross-corpus routing).
+3. **QueryRewriter** expands each route into multiple search formulations (multi-query decomposition).
+4. **Search Fanout** executes parallel multi-source retrieval with:
+   - **Neighbor stitching** — extends KNN hits to sequential neighborhoods for structural completeness
+   - **Mechanical search statistics** — code-calculated coverage, novelty delta, corpus hit counts
+   - **Hierarchical degradation** — primary → cache → graceful empty (no single-point failure)
+5. **Drafter** creates an intermediate answer with claim-level citations (each claim maps to source snippet IDs).
+6. **Sufficient Context Agent** performs the 3-dimension check:
    - Checks required-fact coverage in raw snippets
    - Verifies draft claims are grounded in sources
    - Analyzes missing pieces and generates structured feedback queries
-6. **Selective Generation** fuses sufficiency score with self-rated confidence via logistic regression, applying the paper's decision matrix:
+7. **Selective Generation** fuses sufficiency score with self-rated confidence via logistic regression, applying the paper's decision matrix:
 
    | | Confidence High | Confidence Low |
    |---|---|---|
    | **Sufficient** | ✅ Answer | ⚠️ Answer or re-search |
    | **Insufficient** | ❌ **Must abstain** (most dangerous) | 🔄 Re-search or abstain |
 
-7. **Synthesizer** emits a grounded answer with claim-level citations.
-8. **Abstain** returns structured abstention explaining what information is missing.
+8. **Synthesizer** emits a grounded answer with claim-level citations.
+9. **Abstain** returns structured abstention explaining what information is missing.
+
+All LLM prompts live in a **dedicated template library** (`prompts/__init__.py`), separate from adapter code, with `{variable}` placeholders and cached loading.
 
 ## Architecture
 
 ### LangGraph Node Flow
 
 ```
-                    planner
-                       │
-                       ▼
-               query_rewriter
-                       │
-                       ▼
-                search_fanout
-                  (parallel)
-                       │
-                       ▼
-                   drafter
-                       │
-                       ▼
-             sufficient_context
-              ┌────────┴────────┐
-              │                 │
-         selective_gen      planner
-              │              (iterate)
-        ┌─────┴─────┐           ▲
-        │           │           │
-   synthesizer   abstain    (feedback)
-        │           │
-        └─────┬─────┘
-              ▼
-             END
+             root_agent (strategy delegation)
+                    │
+                    ▼
+               planner
+          (LLM cross-corpus routing)
+                    │
+                    ▼
+           query_rewriter
+        (multi-query decomposition)
+                    │
+                    ▼
+            search_fanout
+     (parallel multi-source | neighbor stitch
+       mech stats | degradation chain)
+                    │
+                    ▼
+               drafter
+       (LLM draft + claim citations)
+                    │
+                    ▼
+         sufficient_context
+     (3-dim check | 5-way verdict
+        Draft First prompting)
+          ┌────────┴────────┐
+          │                 │
+     selective_gen      planner
+   (dual-signal LR)    (iterate)
+      ┌─────┴─────┐       ▲
+      │           │       │
+ synthesizer   abstain (feedback)
+ (LLM answer)  (structured)
+      │           │
+      └─────┬─────┘
+            ▼
+           END
 ```
 
 ### Component Protocols
 
 ```
+RootAgent          ── protocol: delegate(question, corpora) → strategy
 Planner            ── protocol: plan(question, corpora, dead, prior, iteration) → RetrievalPlan
 QueryRewriter      ── protocol: rewrite(plan, prior_assessment, tried) → list[SubQuery]
 Retriever          ── protocol: supports_corpus(corpus) → bool
@@ -345,7 +379,7 @@ Important contracts live in `src/agentic_search/state.py` and `src/agentic_searc
 - `SubQuery`: rewritten query with target corpus and required fact lineage.
 - `Snippet`: retrieved evidence with corpus id, document id, score, and metadata.
 - `JudgementVerdict`: 5-way enum (SUFFICIENT, USEFUL_BUT_INCOMPLETE, INSUFFICIENT, CONFLICTING, UNANSWERABLE).
-- `ContextAssessment`: verdict, sufficiency score, covered/missing facts, feedback queries.
+- `ContextAssessment`: verdict, sufficiency score, covered/missing facts, feedback queries, draft answer.
 - `FeedbackQuery`: directed query with reason and search hints for missing facts.
 - `GroundedAnswer`: final answer with confidence, citations, evidence trail, and missing info.
 - `IterationTrace`: full trace for one iteration (plan, queries, snippets, draft, assessment).
@@ -358,10 +392,17 @@ Important contracts live in `src/agentic_search/state.py` and `src/agentic_searc
 |---|---|
 | **Dual-signal selective generation** | Per the paper: combining confidence + sufficiency outperforms either signal alone by 2–10% |
 | **5-way verdict** | Binary sufficient/insufficient loses nuance; named cases (conflicting, partial) enable better routing |
-| **Protocol-driven plugin architecture** | Every component is a Protocol — swap implementations without changing the orchestration logic |
+| **Draft First prompting** | Forces LLM to mentally draft before judging — prevents hasty "good enough" verdicts |
+| **LLM-based cross-corpus routing** | Planner routes each required fact to its best corpus, not heuristic keyword matching |
+| **Multi-query decomposition** | Query Rewriter expands each route into multiple formulations for higher recall |
+| **Neighbor stitching** | Prevents chunk boundary information loss — preserves tables, lists, code blocks |
+| **Mechanical search stats** | Coverage and novelty tracked by code, not LLM — reliable, zero cost |
+| **Hierarchical degradation** | Primary → cache → empty — single retriever failure does not crash the pipeline |
+| **Independent prompt library** | All prompts in one module, separate from code — supports multi-language, easy customization |
+| **Protocol-driven plugin architecture** | Every component is a Protocol — swap implementations without changing orchestration logic |
 | **Schema registry with repair** | LLM structured output is never perfect; schema validation + auto-repair ensures reliability |
-| **Fact-coverage, not vector-score threshold** | Sufficiency is a fact-level check, not a similarity cutoff — prevents false positives from topically related but insufficient snippets |
-| **No built-in LLM/vector DB** | All LLM and retrieval interactions go through Protocols — user provides their own implementations |
+| **Fact-coverage, not vector-score threshold** | Sufficiency is a fact-level check, not a similarity cutoff |
+| **No built-in LLM/vector DB** | All LLM and retrieval interactions go through Protocols — user provides their own |
 | **LangGraph for state management** | Conditional edges, iteration cycles, and checkpointing are built-in graph primitives |
 | **Configurable selective gen threshold** | `strict` / `balanced` / `lenient` modes map to different production risk profiles |
 | **Gold-labeled autorater dataset** | 93+ instances across 12 edge case categories — enables empirical accuracy measurement |

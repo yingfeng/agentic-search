@@ -7,6 +7,7 @@ converting natural language to structured JSON outputs.
 from __future__ import annotations
 
 from .contracts import Planner, QueryRewriter, SufficiencyJudge, Synthesizer, Drafter, StructuredLLM
+from .prompts import load as P
 from .schema import SchemaRegistry
 from .state import (
     RetrievalPlan,
@@ -29,34 +30,17 @@ from .state import (
 
 
 class LLMRootAgent:
-    """Top-level coordinator — analyzes the question, decides strategy,
-    delegates to sub-agents (planner, rewriter, drafter, judge, synthesizer).
-
-    Per the blog: the Root Agent parses the user's request and delegates
-    to specialized sub-agents for each phase of the pipeline.
-    """
-
-    _SYSTEM_PROMPT = (
-        "You are a Root Agent in a multi-agent RAG system. "
-        "Given a user question and available data corpora, determine: "
-        "1) What type of question this is (simple fact, multi-hop comparison, "
-        "analytical, summarization) "
-        "2) Which corpora are relevant "
-        "3) What search strategy to use "
-        "4) What the success criteria are.\n\n"
-        "Output a delegation plan."
-    )
+    """Top-level coordinator — delegates to sub-agents."""
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
         self.schema = schema_registry
 
     async def delegate(self, question: str, corpora: dict[str, str]) -> str:
-        """Analyze question and return delegation strategy description."""
         corpus_list = "\n".join(f"- {cid}: {desc}" for cid, desc in corpora.items())
         result = await self.llm.complete_json(
-            system_prompt=self._SYSTEM_PROMPT,
-            user_prompt=f"Question: {question}\n\nAvailable corpora:\n{corpus_list}",
+            system_prompt=P("root_agent.system"),
+            user_prompt=P("root_agent.user").format(question=question, corpora=corpus_list),
             output_schema={
                 "type": "object",
                 "properties": {
@@ -78,24 +62,7 @@ class LLMRootAgent:
 
 class LLMPlanner:
     """LLM-based planner — decomposes question into required facts and
-    routes each fact to the best corpus.
-
-    Per the blog: the Planner Agent maps out information pathways,
-    deciding which databases/indices to search for each fact.
-    """
-
-    _SYSTEM_PROMPT = (
-        "You are a Planner Agent in a multi-agent RAG system. "
-        "Given a user question and a set of available corpora (each with a description):\n\n"
-        "1. Decompose the question into the specific facts needed to answer it.\n"
-        "2. For each fact, determine which corpus is most likely to contain it.\n"
-        "3. Create a search route: a targeted query for each fact to its best corpus.\n\n"
-        "Rules:\n"
-        "- If a fact may exist in multiple corpora, create a route for each.\n"
-        "- If no corpus seems relevant for a fact, pick the most plausible one as a probe.\n"
-        "- Each route must have a specific, search-optimized query (not the original question).\n"
-        "- Output routes and facts in the specified JSON schema."
-    )
+    routes each fact to the best corpus."""
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
@@ -122,17 +89,11 @@ class LLMPlanner:
             hints = "\n".join(f"  Missing: {fq.reason} — try: {fq.query}" for fq in prior_assessment.feedback_queries[:5])
             feedback_hint = f"\nPrevious iteration identified these gaps:\n{hints}\nFocus new routes on filling these gaps."
 
-        user_prompt = (
-            f"Question: {question}\n"
-            f"Available corpora:\n{corpus_list}\n"
-            f"{feedback_hint}\n\n"
-            f"Decompose into required facts and routes. "
-            f"For each fact: assign it to the best corpus and write a targeted search query."
-        )
-
         result = await self.llm.complete_json(
-            system_prompt=self._SYSTEM_PROMPT,
-            user_prompt=user_prompt,
+            system_prompt=P("planner.system"),
+            user_prompt=P("planner.user").format(
+                question=question, corpora=corpus_list, feedback_hint=feedback_hint,
+            ),
             output_schema=self.schema.get("SearchPlan").to_json_schema(),
         )
 
@@ -176,25 +137,7 @@ class LLMPlanner:
 
 
 class LLMQueryRewriter:
-    """LLM-based query rewriter — decomposes each route's query into
-    multiple optimized search queries.
-
-    Per the blog: the Query Rewriter translates the request into multiple
-    search queries, e.g. turning "What's up with Project X?" into
-    "Status report for Project X Q3" and "Key blockers for Project X team."
-    """
-
-    _SYSTEM_PROMPT = (
-        "You are a Query Rewriter Agent. "
-        "Given a question and a set of search routes (each targeting a specific fact and corpus):\n\n"
-        "For each route, expand the query into 1–2 different formulations. "
-        "Use synonyms, different phrasings, and specific terms to maximize recall.\n\n"
-        "Rules:\n"
-        "- Each subquery must target exactly one fact.\n"
-        "- Queries should be concise and search-optimized (3-8 words).\n"
-        "- Avoid repeating queries that have already been attempted.\n"
-        "- If feedback_queries from a prior assessment exist, prioritize those."
-    )
+    """LLM-based query rewriter — multi-query decomposition."""
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
@@ -208,7 +151,7 @@ class LLMQueryRewriter:
     ) -> list[SubQuery]:
         subqueries: list[SubQuery] = []
 
-        # First, add untried routes
+        # Add untried routes
         for route in plan.routes:
             if route.corpus in getattr(plan, "_dead_corpora", set()):
                 continue
@@ -221,18 +164,16 @@ class LLMQueryRewriter:
                     required_fact_ids=route.required_fact_ids,
                 ))
 
-        # Second, expand each route into multiple formulations via LLM
+        # Expand into multi-formulations via LLM
         if subqueries and len(plan.required_facts) > 1:
             route_text = "\n".join(
                 f"- fact(s) {sq.required_fact_ids} in {sq.target_corpus}: {sq.text}"
                 for sq in subqueries[:5]
             )
             result = await self.llm.complete_json(
-                system_prompt=self._SYSTEM_PROMPT,
-                user_prompt=(
-                    f"Original routes:\n{route_text}\n\n"
-                    f"Expand each into alternate search formulations. "
-                    f"Already tried: {tried_queries or 'none'}."
+                system_prompt=P("rewriter.system"),
+                user_prompt=P("rewriter.user").format(
+                    routes=route_text, tried=str(tried_queries or "none"),
                 ),
                 output_schema=self.schema.get("QueryRewriteResult").to_json_schema(),
             )
@@ -270,25 +211,7 @@ class LLMQueryRewriter:
 
 
 class LLMDrafter:
-    """LLM-based drafter — generates intermediate draft with claim-level citations.
-
-    Per the blog: the Drafter creates an intermediate answer from retrieved
-    snippets. Each claim maps to its source snippet IDs for traceability.
-    The draft is then used by the Sufficient Context Agent to verify coverage.
-    """
-
-    _SYSTEM_PROMPT = (
-        "You are a Drafter Agent. "
-        "Given a question and a set of retrieved snippets (each with an ID):\n\n"
-        "1. Extract all factual claims that can support an answer.\n"
-        "2. For each claim, cite the exact snippet IDs that support it.\n"
-        "3. Write a coherent draft answer synthesizing all claims.\n\n"
-        "Rules:\n"
-        "- ONLY use information present in the provided snippets.\n"
-        "- Each claim must cite at least one snippet ID.\n"
-        "- If you cannot make a claim without speculating, leave it out.\n"
-        "- Claims should be atomic: one fact per claim."
-    )
+    """LLM-based drafter — intermediate draft with claim-level citations."""
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
@@ -301,19 +224,15 @@ class LLMDrafter:
         snippets: list[Snippet],
     ) -> DraftAnswer:
         if not snippets:
-            return DraftAnswer(
-                text="No context retrieved yet.",
-                claims=[],
-                citations={},
-            )
+            return DraftAnswer(text="No context retrieved yet.", claims=[], citations={})
 
         context_text = "\n\n".join(
             f"[{sn.snippet_id}] {sn.text[:500]}" for sn in snippets[:15]
         )
 
         result = await self.llm.complete_json(
-            system_prompt=self._SYSTEM_PROMPT,
-            user_prompt=f"Question: {question}\n\nRetrieved snippets:\n{context_text}",
+            system_prompt=P("drafter.system"),
+            user_prompt=P("drafter.user").format(question=question, context=context_text),
             output_schema=self.schema.get("DraftAnswer").to_json_schema(),
         )
 
@@ -350,31 +269,7 @@ class LLMDrafter:
 
 
 class LLMSufficiencyJudge:
-    """LLM-based sufficiency judge — full 3-dimension check.
-
-    Prompt design incorporates the "Draft First" technique: force the LLM
-    to mentally draft an answer before judging sufficiency.
-    """
-
-    _SYSTEM_PROMPT = (
-        "You are a Sufficient Context Agent in an agentic RAG system.\n\n"
-        "Follow these steps:\n\n"
-        "Step 1 — Mentally draft a potential answer.\n"
-        "   Based ONLY on the retrieved snippets, draft the best answer you can.\n\n"
-        "Step 2 — Identify gaps.\n"
-        "   For each required fact, check: is the information present in the snippets?\n"
-        "   Are there any parts of the question left unanswered?\n"
-        "   Is any critical information missing or contradictory?\n\n"
-        "Step 3 — Classify the verdict.\n"
-        "   - sufficient: All required facts are covered.\n"
-        "   - partial: Some facts covered, but not all.\n"
-        "   - insufficient: Key facts are missing.\n"
-        "   - conflicting: Multiple contradictory values for the same fact.\n"
-        "   - unanswerable: No relevant information found.\n\n"
-        "Step 4 — Generate feedback.\n"
-        "   For each missing fact, provide a specific feedback query.\n\n"
-        "Respond using the provided JSON schema."
-    )
+    """LLM-based sufficiency judge — full 3-dimension check (Draft First)."""
 
     def __init__(self, llm: StructuredLLM, schema_registry: SchemaRegistry):
         self.llm = llm
@@ -405,15 +300,11 @@ class LLMSufficiencyJudge:
             f"- {f.fact_id}: {f.description}" for f in plan.required_facts
         )
 
-        user_prompt = (
-            f"Question: {question}\n\n"
-            f"Required facts:\n{fact_list}\n\n"
-            f"Retrieved context:\n{context_text}"
-        )
-
         result = await self.llm.complete_json(
-            system_prompt=self._SYSTEM_PROMPT,
-            user_prompt=user_prompt,
+            system_prompt=P("judge.system"),
+            user_prompt=P("judge.user").format(
+                question=question, facts=fact_list, context=context_text,
+            ),
             output_schema=self.schema.get("ContextAssessment").to_json_schema(),
         )
 
@@ -465,15 +356,9 @@ class LLMSynthesizer:
         status: AnswerStatus,
     ) -> GroundedAnswer:
         context_text = "\n\n".join(f"[{sn.snippet_id}] {sn.text}" for sn in snippets[:10])
-        user_prompt = (
-            f"Question: {question}\n\n"
-            f"Retrieved context:\n{context_text}\n\n"
-            f"Answer based ONLY on the provided context. Cite sources."
-        )
-
         result = await self.llm.complete_json(
-            system_prompt="You generate grounded answers with citations.",
-            user_prompt=user_prompt,
+            system_prompt=P("synthesizer.system"),
+            user_prompt=P("synthesizer.user").format(question=question, context=context_text),
             output_schema=self.schema.get("GroundedAnswer").to_json_schema(),
         )
 
