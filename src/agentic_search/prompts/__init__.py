@@ -126,17 +126,96 @@ def _load_all() -> dict[str, str]:
             "Answer based ONLY on the provided context. Cite sources."
         ),
 
-        # ── Autorater ──
-        "autorater.system": (
-            "Given a QUESTION and CONTEXT, determine if the CONTEXT contains "
-            "enough information to answer the QUESTION.\n\n"
-            "A context is SUFFICIENT if it contains all the necessary information "
-            "to provide a definitive answer to the question. It is INSUFFICIENT if "
-            "the information is incomplete, inconclusive, or contradictory.\n\n"
-            "Use chain-of-thought reasoning before providing your final answer.\n"
-            "SUFFICIENT or INSUFFICIENT?"
+        # ── Autorater (Gemini, paper's 93% 1-shot prompt) ──
+        "autorater.paper": (
+            "You are an expert LLM evaluator that excels at evaluating "
+            "a QUESTION and REFERENCES.\n"
+            "Consider the following criteria:\n"
+            "Sufficient Context: 1 IF the CONTEXT is sufficient to infer "
+            "the answer to the question and 0 IF the CONTEXT cannot be used "
+            "to infer the answer to the question\n"
+            "Assume the queries have timestamp <TIMESTAMP>.\n"
+            "First, output a list of step-by-step questions that would be "
+            "used to arrive at a label for the criteria. Make sure to include "
+            "questions about assumptions implicit in the QUESTION.\n"
+            "Include questions about any mathematical calculations or "
+            "arithmetic that would be required.\n"
+            "Next, answer each of the questions. Make sure to work step by "
+            "step through any required mathematical calculations or arithmetic. "
+            "Finally, use these answers to evaluate the criteria.\n"
+            "Output the ### EXPLANATION (Text). Then, use the EXPLANATION "
+            "to output the ### EVALUATION (JSON)\n"
+            "EXAMPLE:\n"
+            "### QUESTION\n"
+            "In which year did the publisher of Roald Dahl's Guide to "
+            "Railway Safety cease to exist?\n"
+            "### References\n"
+            "Roald Dahl's Guide to Railway Safety was published in 1991 by "
+            "the British Railways Board. The British Railways Board (BRB) was "
+            "a nationalised industry in the United Kingdom that operated "
+            "from 1963 to 2001.\n"
+            "### EXPLANATION\n"
+            "The context mentions that Roald Dahl's Guide to Railway Safety "
+            "was published by the British Railways Board. It also states that "
+            "the British Railways Board operated from 1963 to 2001, meaning "
+            "the year it ceased to exist was 2001. Therefore, the context "
+            "does provide a precise answer to the question.\n"
+            "### JSON\n"
+            '{"Sufficient Context": 1}\n'
+            "Remember the instructions:\n"
+            "First, output a list of step-by-step questions.\n"
+            "Next, answer each question.\n"
+            "Finally, output ### EXPLANATION then ### EVALUATION (JSON).\n"
+            "### QUESTION\n"
+            "{question}\n"
+            "### REFERENCES\n"
+            "{context}"
         ),
-        "autorater.user": (
-            "QUESTION: {question}\nCONTEXT: {context}"
+
+        # ── Autorater (FLAMe, compact binary) ──
+        "autorater.flame": (
+            "INSTRUCTIONS:\n"
+            "title: Is the context sufficient to infer the answer to "
+            "the question?\n"
+            "description: In this task, you will be provided with documents "
+            "and a question. Use one of the following labels under 'judgment':\n"
+            "1. sufficient: The documents are sufficient to infer the answer.\n"
+            "2. insufficient: The documents are not sufficient to infer "
+            "the answer.\n"
+            "output_fields: judgment\n"
+            "CONTEXT:\n"
+            "documents: {context} question: {question}"
+        ),
+
+        # ── LLM Eval (paper's correctness evaluation prompt) ──
+        "llm_eval.system": (
+            "I need your help in evaluating an answer provided by an LLM "
+            "against ground truth answers.\n"
+            "Your task is to determine if the LLM's response matches the "
+            "ground truth answers.\n\n"
+            "===Instructions===\n"
+            "1. Carefully compare the 'Predicted Answer' with the "
+            "'Ground Truth Answers'.\n"
+            "2. Consider the substance of the answers – look for equivalent "
+            "information or correct answers.\n"
+            "3. Your final decision should be based on whether the meaning "
+            "and the vital facts of the Ground Truth Answers are present "
+            "in the Predicted Answer.\n"
+            "4. Categorize the answer as one of the following:\n"
+            "- 'perfect': The answer is completely correct and matches.\n"
+            "- 'acceptable': The answer is partially correct or contains "
+            "the main idea.\n"
+            "- 'incorrect': The answer is wrong or contradicts ground truth.\n"
+            "- 'missing': The answer is 'I don't know' or similar.\n\n"
+            "Provide your evaluation in this format:\n"
+            "Explanation: (How you made the decision)\n"
+            "Decision: (perfect, acceptable, incorrect, or missing)"
+        ),
+        "llm_eval.user": (
+            "===Input Data===\n"
+            "- Question: {question}\n"
+            "- Predicted Answer: {predicted}\n"
+            "- Ground Truth Answers: {ground_truth}\n\n"
+            "Please proceed with the evaluation."
         ),
     }
